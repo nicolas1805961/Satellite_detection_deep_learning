@@ -1,0 +1,14 @@
+Correlation
+
+Precision: 1.0
+Recall: 1.0
+F1 score: 1.0
+
+
+TMHQT
+
+Precision: 1.0
+Recall: 1.0
+F1 score: 1.0
+
+

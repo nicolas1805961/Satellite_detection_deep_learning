@@ -1,0 +1,12 @@
+{
+	"Type": "Verite",
+	"Image": "IM_sequence_defilant_SNR_10_04.fits.gz",
+	"Nombre_objet": 1,
+	"Objets": [
+		{
+			"Id": 1,
+			"x": 665,
+			"y": 1465
+		}
+	]
+}

@@ -1,0 +1,36 @@
+version: 1.1
+kind: component
+name: notebook
+inputs:
+- name: image
+  isOptional: true
+  type: str
+  value: registry.magellium.com:443/deeplearning/deep_cluster/polyaxon/rotated_bbx:latest
+run:
+  kind: service
+  ports: [8888]
+  environment:
+    imagePullSecrets: ["deep-cluster-registry"]
+    nodeSelector:
+      polyaxon: exp-gpu
+  connections: [data-deep]
+  container:
+    resources:
+      requests:
+        nvidia.com/gpu: 1
+      limits:
+        nvidia.com/gpu: 1
+    image: "{{image}}"
+    command: ["jupyter", "notebook"]
+    args: [
+      "--no-browser",
+      "--ip=0.0.0.0",
+      "--port={{globals.ports[0]}}",
+      "--allow-root",
+      "--NotebookApp.allow_origin=*",
+      "--NotebookApp.trust_xheaders=True",
+      "--NotebookApp.token=",
+      "--NotebookApp.base_url={{globals.base_url}}",
+      "--NotebookApp.notebook_dir={{globals.run_outputs_path}}",
+      "--LabApp.base_url={{globals.base_url}}"
+    ]

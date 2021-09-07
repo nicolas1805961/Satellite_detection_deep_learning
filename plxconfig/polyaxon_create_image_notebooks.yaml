@@ -1,0 +1,29 @@
+version: 1.1
+kind: operation
+name: build
+params:
+  destination:
+    connection: registry-magellium-kaniko
+    value: polyaxon/rotated_bbx
+runPatch:
+  init:
+    - dockerfile:
+        image: "pytorch/pytorch:1.7.1-cuda11.0-cudnn8-devel"
+        run:
+          - "apt-get -y update"
+          - "apt -y install build-essential"
+          - "apt-get install ffmpeg libsm6 libxext6  -y"
+          - "apt-get install -y git"
+          - "python -m pip install --no-cache-dir -U 
+                                                                      matplotlib
+                                                                      matplotlib-inline
+                                                                      astropy
+                                                                      scikit-learn
+                                                                      opencv-python
+                                                                      sympy
+                                                                      pandas
+                                                                      Shapely
+                                                                      jupyterlab
+                                                                      notebook"
+        langEnv: "en_US.UTF-8"
+hubRef: kaniko

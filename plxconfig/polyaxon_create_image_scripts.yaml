@@ -1,0 +1,33 @@
+version: 1.1
+kind: operation
+name: build
+params:
+  destination:
+    connection: registry-magellium-kaniko
+    value: polyaxon/rotated_bbx
+runPatch:
+  init:
+    - dockerfile:
+        image: "nvidia/cuda:11.1.1-cudnn8-devel"
+        env: {'FORCE_CUDA': 1, 'TORCH_CUDA_ARCH_LIST': 'Kepler;Kepler+Tesla;Maxwell;Maxwell+Tegra;Pascal;Volta;Turing', 'TZ': 'Europe/London', 'DEBIAN_FRONTEND': 'noninteractive'}
+        run:
+          #- "apt-get -y update"
+          #- "apt -y install build-essential"
+          #- "apt-get install ffmpeg libsm6 libxext6  -y"
+          #- "apt-get install -y git"
+          - "apt-get update && apt-get install -y python3-opencv ca-certificates python3-dev git wget sudo ninja-build"
+          - "ln -sv /usr/bin/python3 /usr/bin/python"
+          - "wget https://bootstrap.pypa.io/get-pip.py && python3 get-pip.py --user && rm get-pip.py"
+          - "python -m pip install --no-cache-dir -U torch==1.9.0+cu111 torchvision==0.10.0+cu111 torchaudio==0.9.0 -f https://download.pytorch.org/whl/torch_stable.html"
+          - "python -m pip install --no-cache-dir -U 
+                                                                      git+https://github.com/facebookresearch/detectron2.git
+                                                                      matplotlib
+                                                                      matplotlib-inline
+                                                                      astropy
+                                                                      scikit-learn
+                                                                      opencv-python
+                                                                      sympy
+                                                                      pandas
+                                                                      Shapely"
+        langEnv: "en_US.UTF-8"
+hubRef: kaniko

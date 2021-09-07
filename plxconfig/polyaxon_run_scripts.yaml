@@ -1,0 +1,38 @@
+version: 1.1
+kind: operation
+component:
+  version: 1.1
+  kind: component
+  name: rotated
+  tags:
+    - niport
+  inputs:
+    - name: context_folder
+      type: str
+      value: '/data_deep/SST_CNES_LOT2/training_scripts'
+      isOptional: true
+  run:
+    kind: job
+    environment:
+      nodeSelector:
+        polyaxon: exp-gpu
+      imagePullSecrets:
+        - deep-cluster-registry
+    connections:
+      - data-deep
+    container:
+      command:
+        #- ls
+        #- /data_deep/SST_CNES_LOT2/Nouveaux_Datasets
+        - python
+        - train_sst.py
+        - config.yaml
+      image: >-
+        registry.magellium.com:443/deeplearning/deep_cluster/polyaxon/rotated_bbx:latest
+      name: polyaxon-main
+      resources:
+        requests:
+          nvidia.com/gpu: 1
+        limits:
+          nvidia.com/gpu: 1
+      workingDir: '{{ context_folder }}'

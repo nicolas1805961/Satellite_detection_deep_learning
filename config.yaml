@@ -1,0 +1,97 @@
+TRAINING:
+  TOOL: BB_DETECTION # SEG_INSTANCE
+  MODE: EARTH #SIDERAL  (SEG_INSTANCE + EARTH = ERROR)
+  PATH_OUT: output # Folder where output infered images and model weights will be saved. This folder is deleted before each training.
+  PATH_TRAIN: /run/user/977380173/gvfs/smb-share:server=discovery,share=data_deep/SST_CNES_LOT2/Nouveaux_Datasets # See Readme for explanation
+  DEFILANT:
+    SOLVER:
+      IMS_PER_BATCH: 2 # taille du batch
+      MAX_ITER: 300 # Nombre d'iterations
+      BASE_LR: 0.005 # Start learning rate
+      FINAL_LR: 0.001 # End learning rate
+    MODEL:
+      ANCHOR_GENERATOR:
+        ANGLES: [[180,165,150,135,120,105,90]] # angles des boites d'ancrage generées par le rpn
+        SIZES: [[32], [64], [128], [256], [512]] # Anchor boxes size. Chaque sous liste correspond à la taille des boites d'ancrages pour une feature map du FPN
+      ROI_HEADS:
+        BATCH_SIZE_PER_IMAGE: 128 # Nombre de ROIs traités par la partie box-head (dernière partie du réseau) dans une "forward pass"
+      ROI_BOX_HEAD:
+        BBOX_REG_WEIGHTS: [10, 10, 5, 5, 10] # Poids des fonctions de cout (centroid en x, centroid en y, hauteur, largeur, angle) dans la partie box-head
+  PONCTUEL:
+    SOLVER:
+      IMS_PER_BATCH: 2
+      MAX_ITER: 300
+      BASE_LR: 0.01
+      FINAL_LR: 0.0001
+    MODEL:
+      USE_BACKBONE: True # false
+      ANCHOR_GENERATOR:
+        ANGLES: [[-90, 0, 90]]
+        SIZES: [[16], [32], [64], [128], [256]]
+      ROI_HEADS:
+        BATCH_SIZE_PER_IMAGE: 128
+  STAR:
+    SOLVER:
+      IMS_PER_BATCH: 1
+      MAX_ITER: 300
+      BASE_LR: 0.0005
+      FINAL_LR: 0.0001
+    MODEL:
+      ANCHOR_GENERATOR:
+        ANGLES: [[-90, 0, 90]]
+        SIZES: [[32], [64], [128], [256], [512]]
+      ROI_HEADS:
+        BATCH_SIZE_PER_IMAGE: 5
+      RPN:
+        POST_NMS_TOPK_TRAIN: 100 # Nombre de boites d'ancrages gardées après le nms dans le rpn. Ces boites seront utilisées dans la partie box-head
+        PRE_NMS_TOPK_TRAIN: 200 # Nombre de boites d'ancrages selectionnées avant le nms dans le rpn.
+        POST_NMS_TOPK_TEST: 100 # Nombre de boites d'ancrages gardées après le nms dans le rpn. Ces boites seront utilisées dans la partie box-head
+        PRE_NMS_TOPK_TEST: 100 # Nombre de boites d'ancrages selectionnées avant le nms dans le rpn.
+INFERENCE:
+  TOOL: SEG_INSTANCE #SEG_INSTANCE
+  MODE: SIDERAL #EARTH  (SEG_INSTANCE + EARTH = ERROR)
+  PATH_OUT: output # Folder where output infered images and model weights will be saved. This folder is deleted before each training.
+  PATH_TEST: image_inference_sideral # Path to a png image folder. Inference will be conducted on this directory's images.
+  DISPLAY_LABELS: false #True
+  DISPLAY_LINES: false #True
+  WEIGHT_FOLDER: /run/user/977380173/gvfs/smb-share:server=discovery,share=data_deep/SST_CNES_LOT2/good_weights/output_sideral # See Readme
+  DEFILANT:
+    MODEL:
+      ROI_HEADS:
+        SCORE_THRESH_TEST: 0.75 # Les detections ne sont gardés seulement si leur taux de confiance est supérieur à ce seuil
+        NMS_THRESH_TEST: 0.5 # Les detections ayant un iou avec une autre boite supérieur à ce seuil sont supprimées
+  PONCTUEL:
+    MODEL:
+      ROI_HEADS:
+        SCORE_THRESH_TEST: 0.75
+        NMS_THRESH_TEST: 0.5
+  STAR:
+    PERCENT_TO_KEEP: 10 # Percent of stars to keep in infered image
+    MODEL:
+      ROI_HEADS:
+        SCORE_THRESH_TEST: 0.75
+        NMS_THRESH_TEST: 0.5
+BENCHMARKS:
+  MODE: SIDERAL #SIDERAL (SEG_INSTANCE + EARTH = ERROR)
+  METHOD_1_NAME: TRITON
+  METHOD_2_NAME: FASTER-R-CNN
+  PATH_OUT: output # Folder where output infered images and model weights will be saved. This folder is deleted before each training.
+  PATH_TRITON: /run/user/977380173/gvfs/smb-share:server=discovery,share=data_deep/SST_CNES_LOT2/Resultats_Triton_deep_perfo_earth_20210708_102214/json_data # Path to json folder containing results of Triton
+  PATH_BENCH: /run/user/977380173/gvfs/smb-share:server=discovery,share=data_deep/SST_CNES_LOT2/DATASET_PERFO/Images_simulees/Dataset_deep_perfo_sideral_20210708_101842/bench_three_images # Same structure as PATH_TRAIN, see Readme for explanation
+  WEIGHT_FOLDER_1: /run/user/977380173/gvfs/smb-share:server=discovery,share=data_deep/SST_CNES_LOT2/good_weights/output_earth_backbone # See Readme
+  WEIGHT_FOLDER_2: /run/user/977380173/gvfs/smb-share:server=discovery,share=data_deep/SST_CNES_LOT2/good_weights/output_sideral_rotated # See Readme
+  DEFILANT:
+    MODEL:
+      ROI_HEADS:
+        SCORE_THRESH_TEST: 0.75 # Les detections ne sont gardés seulement si leur taux de confiance est supérieur à ce seuil
+        NMS_THRESH_TEST: 0.5 # Les detections ayant un iou avec une autre boite supérieur à ce seuil sont supprimées
+  PONCTUEL:
+    MODEL:
+      ROI_HEADS:
+        SCORE_THRESH_TEST: 0.75
+        NMS_THRESH_TEST: 0.5
+  STAR:
+    MODEL:
+      ROI_HEADS:
+        SCORE_THRESH_TEST: 0.75
+        NMS_THRESH_TEST: 0.5

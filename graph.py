@@ -42,5 +42,5 @@ elif mode == 'SIDERAL':
 
     myutils_benchmark_sideral.write_metrics(path_out, 0.5, colors, method_name)
 else:
-    raise('INPUT ERROR: MODE must be sideral or earth')
+    raise ValueError('INPUT ERROR: MODE must be sideral or earth')
 

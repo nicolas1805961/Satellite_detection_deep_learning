@@ -9,12 +9,11 @@ Ensuite Detectron peut être installé avec la commande suivante:
     python -m pip install 'git+https://github.com/facebookresearch/detectron2.git'
 
 
-Le fichier de config est divisé en 4 parties:
+Le fichier de config est divisé en 3 parties:
 
     - Training
     - Inference
-    - Benchmarks
-    - Graphs
+    - Benchmarks/Graphs
 
 Dans chacune des parties, des paramètres spécifiques à la tâche sont à spécifier.
 Les benchmarks et graphs ne sont pas disponibles pour la segmentation d'instance
@@ -44,8 +43,11 @@ Dans le cas de la segmentation d'instance, un 4ème sous dossier doit être pré
 
 Les 'i' de ces 3 ou 4 sous dossiers doivent correspondre. Par exemple 0.png (image), 0.csv (étoiles), 0.json (satellites) et 0.png (image labélisée) sont les données correspondant à la même image
 
+Pour lancer l'entrainement sur seulement une ou deux classes, il est nécessaire de modifier la ligne 70 du script 'train_sst.py' pour la detection par boite englobante, ou la ligne 113 pour la segmentation d'instance. La modification doit être la suivante:
 
+    - for cfg_class in cfgs[] --> indiquer dans les crochets sur quelle classe itérer. cfgs est une liste contenant les 3 ou 2 détecteurs selon le mode d'acquisition
 
+Lorsque l'erreur 'inf/nan training has diverged' apparait, cela signifie que le learning rate est trop élevé, il doit être réduit.
 
 
 
@@ -70,7 +72,7 @@ Le champ WEIGHT_FOLDER dans le fichier de config indique le chemin jusqu'au doss
             - le dossier 'output_star' contenant le fichier 'model_final.pth'. Il s'agit du fichier contenant les poids du modèle pour la detection des étoiles.
 
 
-
+Les poids des modèles se situent dans le dossier "good_weights" sur /data_deep/SST_CNES_LOT2/
 
 
 
@@ -104,7 +106,6 @@ WEIGHT_FOLDER_2 correspond aux poids du modèle dont le nom est METHOD_2_NAME. S
 
 
 
-
 Script "graph.py":
 
 usage: python graph.py config_file
@@ -115,8 +116,29 @@ config_file est un argument obligatoire indiquant le chemin jusqu'au fichier de 
 
 Les statistiques utilisées pour generer les graphs et les fichiers de résultat sont celles calculés par le script 'run_benchmark.py'. Le script va chercher les statistiques dans le chemin PATH_OUT et sauvegarde les graphs au même endroit.
 
+Ce script permettant de generer les graphs doit être exécuté APRES avoir executé le script "run_benchmark.py" qui permet de sauvegarder les résultats.
+
+Les paramètres du fichier de config utilisés pour generer les graphs se situent dans la partie benchmark. Il s'agit de:
+
+    - Le paramètre MODE qui doit prendre la même valeur pour la generation des graphs et l'execution des benchmarks (script run_benchmark.py executé précedemment)
+
+    - Les paramètres METHOD_1_NAME et METHOD_2_NAME qui doivent prendre également la même valeur que celles utilisées lors de l'execution du script run_benchmark.py (voir partie script run_benchmark.py)
+
+    - Le paramètre PATH_OUT qui indique le chemin où seront sauvegardés les graphs.
 
 
 
 
-Il n'est pas possible de faire de la segmentation d'instance pour le mode earth. Donc si TOOL prend la valeur SEG_INSTANCE et MODE prend la valeur EARTH, une erreur est obtenue.
+Il existe 2 paires de fichiers permettant de lancer les entrainements sur Polyaxon. 
+
+Les fichiers polyaxon_create_image_scripts.yaml et polyaxon_run_scripts.yaml permettent de lancer les entrainements sur Polyaxon à partir des scripts python (py).
+
+Les fichiers polyaxon_create_image_notebooks.yaml et polyaxon_run_notebooks.yaml permettent de lancer les entrainements sur Polyaxon à partir des notebooks (ipynb).
+
+Dans les deux cas, le fichier polyaxon_create_image_*.yaml doit être executé avant le fichier polyaxon_run_*.yaml.
+
+
+Dans le cas où les scripts doivent être executés sur Polyaxon, les chemins du fichier de config 'config.yaml' doivent commencer par '/data_deep/' et non par '/run/'.
+
+
+Si les scripts doivent être exécutés sur Polyaxon, le code source ainsi que les fichiers yaml doivent être stockés dans un dossier sur /data_deep. Il faut ensuite indiquer dans 'polyaxon_run_script.yaml' le chemin jusqu'à ce dossier dans le paramètre 'context_folder'.

@@ -271,13 +271,13 @@ def filter_boxes_rotated(image_data, thresh):
     return image_data
 
 # Cette fonction permet de supprimer les detections redondantes sur les zones de recouvrement
-def filter_boxes_rotated2(image_data, thresh, aligned=False):
+def filter_boxes_rotated2(image_data, thresh, nb_classes, aligned=False):
     classes_id = image_data['instances'].pred_classes
     boxes = image_data['instances'].pred_boxes.tensor
     indices_to_remove_list = []
     indices_filter = []
 
-    for i in range(2):
+    for i in range(nb_classes):
         current_mask = (classes_id == i)
         object_indices = torch.nonzero(current_mask)
         boxes_current = boxes[current_mask]
@@ -348,10 +348,10 @@ def get_infered_image(png_list, predictors, metadatas, path_out, display_lines, 
                 scores_list = []
                 pred_classes_list = []
                 seg_list = []
-                for idx, class_predictor in enumerate(predictors):
+                for idx, (class_predictor, class_name) in enumerate(zip(predictors, metadatas.thing_classes)):
                     out = class_predictor(image_data['patches'].numpy()[i, j, ...])
                     out['instances'].pred_classes = torch.full(out['instances'].pred_classes.shape, idx, device='cpu')
-                    if idx == 1:
+                    if class_name == 'star':
                         out = drop_sample(out, int(out['instances'].pred_classes.shape[0] * (percent_to_keep / 100)))
                     pred_boxes_list.append(out['instances'].pred_boxes.to('cpu'))
                     pred_classes_list.append(out['instances'].pred_classes.to('cpu'))
@@ -386,7 +386,7 @@ def get_infered_image(png_list, predictors, metadatas, path_out, display_lines, 
 
         # Post traitements
         im = cv2.imread(path)
-        big_output = filter_boxes_rotated2(big_output, 0.5, True)
+        big_output = filter_boxes_rotated2(big_output, 0.5, len(metadatas.thing_classes), True)
         
         v = MyVisualizer(im[:, :, ::-1], metadata=metadatas, scale=1, instance_mode=ColorMode.IMAGE)
         out = v.draw_instance_predictions(big_output["instances"].to("cpu"), display_labels)

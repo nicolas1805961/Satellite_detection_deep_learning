@@ -33,7 +33,7 @@ setup_logger()
 # import some common detectron2 utilities
 from detectron2.data.transforms import RandomFlip
 from detectron2 import model_zoo
-from detectron2.engine import DefaultPredictor, DefaultTrainer, HookBase, LRScheduler, hooks
+from detectron2.engine import DefaultPredictor, DefaultTrainer, HookBase, LRScheduler, hooks, TrainerBase
 from detectron2.config import get_cfg
 from detectron2.utils.visualizer import Visualizer, ColorMode, GenericMask, _create_text_labels
 from detectron2.data import MetadataCatalog, DatasetCatalog, build_detection_test_loader, Metadata, build_detection_train_loader, DatasetMapper
@@ -55,18 +55,32 @@ from detectron2.data import transforms as T
 from detectron2.checkpoint import DetectionCheckpointer
 from detectron2.utils.colormap import random_color
 
-def get_gt_satellite(json_filepath, png_filepath, label_filepath):
+def get_gt_defilant(json_filepath, png_filepath, label_filepath):
     label_image = cv2.imread(label_filepath, cv2.IMREAD_GRAYSCALE)
     image = {'file_name': png_filepath, 'height': 512, 'width': 512, 'image_id': 0}
     image["annotations"] = []
     image = get_defilants(label_image, json_filepath, image, 0)
     return image
 
-def get_gt_star(csv_filepath, png_filepath, label_filepath):
+def get_gt_star_earth(csv_filepath, png_filepath, label_filepath):
     label_image = cv2.imread(label_filepath, cv2.IMREAD_GRAYSCALE)
     image = {'file_name': png_filepath, 'height': 512, 'width': 512, 'image_id': 0}
     image["annotations"] = []
-    image = get_stars(label_image, csv_filepath, image, 0)
+    image = get_stars_earth(label_image, csv_filepath, image, 0)
+    return image
+
+def get_gt_star_sideral(csv_filepath, png_filepath, label_filepath):
+    label_image = cv2.imread(label_filepath, cv2.IMREAD_GRAYSCALE)
+    image = {'file_name': png_filepath, 'height': 512, 'width': 512, 'image_id': 0}
+    image["annotations"] = []
+    image = get_stars_sideral(label_image, csv_filepath, image, 0)
+    return image
+
+def get_gt_ponctuel(json_filepath, png_filepath, label_filepath):
+    label_image = cv2.imread(label_filepath, cv2.IMREAD_GRAYSCALE)
+    image = {'file_name': png_filepath, 'height': 512, 'width': 512, 'image_id': 0}
+    image["annotations"] = []
+    image = get_ponctuels(label_image, json_filepath, image, 0)
     return image
 
 def get_angle(satellite):
@@ -107,13 +121,28 @@ def get_corners(rotated_boxes):
     
     return bev_corners
 
+# Cette fonction permet d'obtenir les 4 coins de boites englobantes
+# a partir des données représentant des boites alignées avec les axes de l'image
+# sous la forme xywh
+def get_corners_xywh(boxes):
+    bev_corners = torch.zeros((len(boxes), 4, 2), dtype=torch.float)
+    bev_corners[:, 0, 0] = boxes[:, 0]
+    bev_corners[:, 0, 1] = boxes[:, 1]
+    bev_corners[:, 1, 0] = boxes[:, 0]
+    bev_corners[:, 1, 1] = boxes[:, 1] + boxes[:, 3]
+    bev_corners[:, 2, 0] = boxes[:, 0] + boxes[:, 2]
+    bev_corners[:, 2, 1] = boxes[:, 1] + boxes[:, 3]
+    bev_corners[:, 3, 0] = boxes[:, 0] + boxes[:, 2]
+    bev_corners[:, 3, 1] = boxes[:, 1]
+    return bev_corners
+
 def get_seg_json(label_img, img_corners, label_value):
     black_img = np.zeros(label_img.shape, dtype=np.uint8)
     converted = img_corners.numpy().astype('int32')
     mask = cv2.fillPoly(black_img, [converted], 1).astype('bool')
     black_img[mask] = label_img[mask]
     temp = np.copy(black_img)
-    black_img[black_img != label_value] = 0
+    black_img[(black_img != label_value) & (black_img != 0)] = label_value
     contours, hierarchy = cv2.findContours(black_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     indices_to_keep_nb_points = []
     for index, contour in enumerate(contours):
@@ -131,7 +160,7 @@ def get_seg_json(label_img, img_corners, label_value):
         #print(np.unique(label_img))
         #print(np.unique(temp))
         #cv2.imwrite('/data_deep/SST_CNES_LOT2/mask_sideral.png', mask.astype(np.uint8) * 255)
-        raise('Number of points in satellite contour < 3 !')
+        raise ValueError('Number of points in satellite contour < 3 !')
     else:
         largest_contour = contours[np.argmax(list_of_poly)]
     return [largest_contour.flatten().tolist()]
@@ -166,7 +195,11 @@ def get_seg_csv(label_img, img_corners, label_value):
         if len(list_of_poly) == 0:
             indices_to_remove.append(idx)
         else:
-            contour_list.append(contours[np.argmax(list_of_poly)])
+            poly_box_area = Polygon([tuple(x.tolist()) for x in obj_corners]).area
+            if np.max(list_of_poly) < (poly_box_area / 3):
+                indices_to_remove.append(idx)
+            else:
+                contour_list.append(contours[np.argmax(list_of_poly)])
     #print(f'nb of contours in function: {len(contour_list)}')
     return [[x.flatten().tolist()] for x in contour_list], indices_to_remove
 
@@ -194,7 +227,30 @@ def get_defilants(label_img, json_filepath, image, category_id, test=False):
         image["annotations"].extend(objs)
     return image
 
-def get_stars(label_img, csv_filepath, image, category_id, test=False):
+def get_ponctuels(label_img, json_filepath, image, category_id, test=False):
+    with open(json_filepath) as json_file:
+        objs = []
+        data = json.load(json_file)
+        satellites = data['Objects']
+        for satellite in satellites:
+            if satellite['Type'] == 'defilant':
+                continue
+            obj = {"bbox_mode": BoxMode.XYWH_ABS}
+            obj["category_id"] = category_id
+            if satellite['mag'] < 16:
+                margin = 4
+            else:
+                margin = 3
+                #margin = -0.92 * satellite['mag'] + 20
+            obj["bbox"] = [satellite['x0'] - margin, satellite['y0'] - margin, 2 * margin, 2 * margin]
+            if test == False:
+                corners = torch.squeeze(get_corners_xywh(torch.tensor(obj["bbox"]).reshape(1, -1)))
+                obj['segmentation'] = get_seg_json(label_img, corners, 127)
+            objs.append(obj)
+        image["annotations"].extend(objs)
+    return image
+
+def get_stars_sideral(label_img, csv_filepath, image, category_id, test=False):
     df = pd.read_csv(csv_filepath, sep=';', usecols=['X0', 'Y0', 'X1', 'Y1', 'Gmag'])
     df['bbox_mode'] = BoxMode.XYWH_ABS
     df['category_id'] = category_id
@@ -217,18 +273,40 @@ def get_stars(label_img, csv_filepath, image, category_id, test=False):
     image["annotations"].extend(objs)
     return image
 
+def get_stars_earth(label_img, csv_filepath, image, category_id, test=False):
+    df = pd.read_csv(csv_filepath, sep=';', usecols=['X0', 'Y0', 'X1', 'Y1', 'Gmag'])
+    df['bbox_mode'] = BoxMode.XYWH_ABS
+    df['category_id'] = category_id
+    margin = (190 * np.exp(-0.5 * df['Gmag']) + 1)
+    width = (df['X0'] - df['X1']) + 2 * margin
+    height = (300 * np.exp(-0.4 * df['Gmag']) + 4)
+    X = (df['X1'] - margin)
+    Y = (df['Y1'] - (height / 2))
+    bbox = pd.concat([X, Y, width, height], axis=1)
+    df['bbox'] = bbox.values.tolist()
+    if test == False:
+        corners = get_corners_xywh(torch.tensor(df["bbox"]))
+        objs_contours, indices_to_remove = get_seg_csv(label_img, corners, 254)
+        assert len(objs_contours) + len(indices_to_remove) == len(df)
+        df.drop(df.index[indices_to_remove], inplace=True)
+        df['segmentation'] = objs_contours
+    df.drop(['X0','Y0', 'X1', 'Y1', 'Gmag'], axis=1, inplace=True)
+    objs = df.to_dict(orient='records')
+    image["annotations"].extend(objs)
+    return image
+
 def get_dataset_all_classes(json_list, png_list, csv_list, label_list):
     dataset = []
     for idx, (json_filepath, image_filepath, csv_filepath, label_filepath) in enumerate(tqdm(zip(json_list, png_list, csv_list, label_list), total=len(json_list), desc='Chargement des datasets')):
         label_image = cv2.imread(label_filepath, cv2.IMREAD_GRAYSCALE)
         image = {'file_name': image_filepath, 'height': 512, 'width': 512, 'image_id': idx}
         image["annotations"] = []
-        image = get_defilants(label_image, json_filepath, image, 0, True)
-        image = get_stars(label_image, csv_filepath, image, 1, True)
+        #image = get_defilants(label_image, json_filepath, image, 0, True)
+        #image = get_stars(label_image, csv_filepath, image, 1, True)
         dataset.append(image)
     return dataset
 
-def get_dataset_satellites(json_list, png_list, label_list):
+def get_dataset_defilants(json_list, png_list, label_list):
     dataset = []
     for idx, (json_filepath, image_filepath, label_filepath) in enumerate(tqdm(zip(json_list, png_list, label_list), total=len(json_list), desc='Chargement du dataset satellite')):
         label_image = cv2.imread(label_filepath, cv2.IMREAD_GRAYSCALE)
@@ -238,21 +316,41 @@ def get_dataset_satellites(json_list, png_list, label_list):
         dataset.append(image)
     return dataset
 
-def get_dataset_etoiles(csv_list, png_list, label_list):
+def get_dataset_ponctuels(json_list, png_list, label_list):
+    dataset = []
+    for idx, (json_filepath, image_filepath, label_filepath) in enumerate(tqdm(zip(json_list, png_list, label_list), total=len(json_list), desc='Chargement du dataset ponctuel')):
+        label_image = cv2.imread(label_filepath, cv2.IMREAD_GRAYSCALE)
+        image = {'file_name': image_filepath, 'height': 512, 'width': 512, 'image_id': idx}
+        image["annotations"] = []
+        image = get_ponctuels(label_image, json_filepath, image, 0)
+        dataset.append(image)
+    return dataset
+
+def get_dataset_etoiles_earth(csv_list, png_list, label_list):
     dataset = []
     for idx, (csv_filepath, image_filepath, label_filepath) in enumerate(tqdm(zip(csv_list, png_list, label_list), total=len(csv_list), desc='Chargement du dataset etoile')):
         label_image = cv2.imread(label_filepath, cv2.IMREAD_GRAYSCALE)
         image = {'file_name': image_filepath, 'height': 512, 'width': 512, 'image_id': idx}
         image["annotations"] = []
-        image = get_stars(label_image, csv_filepath, image, 0)
+        image = get_stars_earth(label_image, csv_filepath, image, 0)
+        dataset.append(image)
+    return dataset
+
+def get_dataset_etoiles_sideral(csv_list, png_list, label_list):
+    dataset = []
+    for idx, (csv_filepath, image_filepath, label_filepath) in enumerate(tqdm(zip(csv_list, png_list, label_list), total=len(csv_list), desc='Chargement du dataset etoile')):
+        label_image = cv2.imread(label_filepath, cv2.IMREAD_GRAYSCALE)
+        image = {'file_name': image_filepath, 'height': 512, 'width': 512, 'image_id': idx}
+        image["annotations"] = []
+        image = get_stars_sideral(label_image, csv_filepath, image, 0)
         dataset.append(image)
     return dataset
 
 def build_lists(path):
-    json_list = sorted(glob(os.path.join(path, 'json_data', '*')), key=lambda x: int(x.split('.')[-2].split('/')[-1]))
-    csv_list = sorted(glob(os.path.join(path, 'csv_data', '*')), key=lambda x: int(x.split('.')[-2].split('/')[-1]))
-    png_list = sorted(glob(os.path.join(path, 'png_data', '*')), key=lambda x: int(x.split('.')[-2].split('/')[-1]))
-    label_list = sorted(glob(os.path.join(path, 'label', '*')), key=lambda x: int(x.split('.')[-2].split('/')[-1]))
+    json_list = sorted(glob(os.path.join(path, 'json_data', '*.json')), key=lambda x: int(x.split('.')[-2].split('/')[-1]))
+    csv_list = sorted(glob(os.path.join(path, 'csv_data', '*.csv')), key=lambda x: int(x.split('.')[-2].split('/')[-1]))
+    png_list = sorted(glob(os.path.join(path, 'png_data', '*.png')), key=lambda x: int(x.split('.')[-2].split('/')[-1]))
+    label_list = sorted(glob(os.path.join(path, 'label', '*.png')), key=lambda x: int(x.split('.')[-2].split('/')[-1]))
     print(len(json_list))
     print(len(csv_list))
     print(len(png_list))
@@ -289,18 +387,36 @@ def build_list_dict(list_of_files):
     return out
 
 def register_datasets_defilant(list_dict):
-    DatasetCatalog.register('train_defilant', lambda : get_dataset_satellites(list_dict['json_train'], list_dict['png_train'], list_dict['label_train']))
-    DatasetCatalog.register('val_defilant', lambda : get_dataset_satellites(list_dict['json_val'], list_dict['png_val'], list_dict['label_val']))
-    DatasetCatalog.register('test_defilant', lambda : get_dataset_satellites(list_dict['json_test'], list_dict['png_test'], list_dict['label_test']))
-    MetadataCatalog.get("train_defilant").set(thing_classes=["satellite"], thing_colors=[(255, 0, 0)])
-    MetadataCatalog.get("val_defilant").set(thing_classes=["satellite"], thing_colors=[(255, 0, 0)])
-    MetadataCatalog.get("test_defilant").set(thing_classes=["satellite"], thing_colors=[(255, 0, 0)])
+    DatasetCatalog.register('train_defilant', lambda : get_dataset_defilants(list_dict['json_train'], list_dict['png_train'], list_dict['label_train']))
+    DatasetCatalog.register('val_defilant', lambda : get_dataset_defilants(list_dict['json_val'], list_dict['png_val'], list_dict['label_val']))
+    DatasetCatalog.register('test_defilant', lambda : get_dataset_defilants(list_dict['json_test'], list_dict['png_test'], list_dict['label_test']))
+    MetadataCatalog.get("train_defilant").set(thing_classes=["defilant"], thing_colors=[(255, 0, 0)])
+    MetadataCatalog.get("val_defilant").set(thing_classes=["defilant"], thing_colors=[(255, 0, 0)])
+    MetadataCatalog.get("test_defilant").set(thing_classes=["defilant"], thing_colors=[(255, 0, 0)])
     return MetadataCatalog.get("train_defilant")
 
-def register_datasets_star(list_dict):
-    DatasetCatalog.register('train_star', lambda : get_dataset_etoiles(list_dict['csv_train'], list_dict['png_train'], list_dict['label_train']))
-    DatasetCatalog.register('val_star', lambda : get_dataset_etoiles(list_dict['csv_val'], list_dict['png_val'], list_dict['label_val']))
-    DatasetCatalog.register('test_star', lambda : get_dataset_etoiles(list_dict['csv_test'], list_dict['png_test'], list_dict['label_test']))
+def register_datasets_ponctuel(list_dict):
+    DatasetCatalog.register('train_ponctuel', lambda : get_dataset_ponctuels(list_dict['json_train'], list_dict['png_train'], list_dict['label_train']))
+    DatasetCatalog.register('val_ponctuel', lambda : get_dataset_ponctuels(list_dict['json_val'], list_dict['png_val'], list_dict['label_val']))
+    DatasetCatalog.register('test_ponctuel', lambda : get_dataset_ponctuels(list_dict['json_test'], list_dict['png_test'], list_dict['label_test']))
+    MetadataCatalog.get("train_ponctuel").set(thing_classes=["ponctuel"], thing_colors=[(0, 255, 0)])
+    MetadataCatalog.get("val_ponctuel").set(thing_classes=["ponctuel"], thing_colors=[(0, 255, 0)])
+    MetadataCatalog.get("test_ponctuel").set(thing_classes=["ponctuel"], thing_colors=[(0, 255, 0)])
+    return MetadataCatalog.get("train_ponctuel")
+
+def register_datasets_etoile_earth(list_dict):
+    DatasetCatalog.register('train_star', lambda : get_dataset_etoiles_earth(list_dict['csv_train'], list_dict['png_train'], list_dict['label_train']))
+    DatasetCatalog.register('val_star', lambda : get_dataset_etoiles_earth(list_dict['csv_val'], list_dict['png_val'], list_dict['label_val']))
+    DatasetCatalog.register('test_star', lambda : get_dataset_etoiles_earth(list_dict['csv_test'], list_dict['png_test'], list_dict['label_test']))
+    MetadataCatalog.get("train_star").set(thing_classes=["etoile"], thing_colors=[(0, 0, 255)])
+    MetadataCatalog.get("val_star").set(thing_classes=["etoile"], thing_colors=[(0, 0, 255)])
+    MetadataCatalog.get("test_star").set(thing_classes=["etoile"], thing_colors=[(0, 0, 255)])
+    return MetadataCatalog.get("train_star")
+
+def register_datasets_etoile_sideral(list_dict):
+    DatasetCatalog.register('train_star', lambda : get_dataset_etoiles_sideral(list_dict['csv_train'], list_dict['png_train'], list_dict['label_train']))
+    DatasetCatalog.register('val_star', lambda : get_dataset_etoiles_sideral(list_dict['csv_val'], list_dict['png_val'], list_dict['label_val']))
+    DatasetCatalog.register('test_star', lambda : get_dataset_etoiles_sideral(list_dict['csv_test'], list_dict['png_test'], list_dict['label_test']))
     MetadataCatalog.get("train_star").set(thing_classes=["etoile"], thing_colors=[(0, 0, 255)])
     MetadataCatalog.get("val_star").set(thing_classes=["etoile"], thing_colors=[(0, 0, 255)])
     MetadataCatalog.get("test_star").set(thing_classes=["etoile"], thing_colors=[(0, 0, 255)])
@@ -390,11 +506,11 @@ class MyVisualizer(Visualizer):
         )
         return self.output
 
-def display_classes(list_of_files_new, metadatas):
+def display_classes_sideral(list_of_files_new, metadatas):
     
     random_index = np.random.randint(0, len(list_of_files_new[0]), 1)[0]
-    data_satellite = get_gt_satellite(list_of_files_new[0][random_index], list_of_files_new[2][random_index], list_of_files_new[3][random_index])
-    data_star = get_gt_star(list_of_files_new[1][random_index], list_of_files_new[2][random_index], list_of_files_new[3][random_index])
+    data_satellite = get_gt_defilant(list_of_files_new[0][random_index], list_of_files_new[2][random_index], list_of_files_new[3][random_index])
+    data_star = get_gt_star_sideral(list_of_files_new[1][random_index], list_of_files_new[2][random_index], list_of_files_new[3][random_index])
     
     print(data_satellite["file_name"])
     
@@ -412,14 +528,42 @@ def display_classes(list_of_files_new, metadatas):
     out = visualizer.draw_dataset_dict(output)
     cv2.imwrite('gt_image_example.png', out.get_image())
 
+def display_classes_earth(list_of_files_new, metadatas):
+    
+    random_index = np.random.randint(0, len(list_of_files_new[0]), 1)[0]
+    print(list_of_files_new[0][random_index])
+    data_defilant = get_gt_defilant(list_of_files_new[0][random_index], list_of_files_new[2][random_index], list_of_files_new[3][random_index])
+    data_star = get_gt_star_earth(list_of_files_new[1][random_index], list_of_files_new[2][random_index], list_of_files_new[3][random_index])
+    data_ponctuel = get_gt_ponctuel(list_of_files_new[0][random_index], list_of_files_new[2][random_index], list_of_files_new[3][random_index])
+    
+    output = {'file_name': data_defilant["file_name"], 'height': 512, 'width': 512, 'image_id': 0}
+    objs = []
+    for obj_star in data_star['annotations']:
+        obj_star['category_id'] = 2
+        objs.append(obj_star)
+    for obj_defilant in data_defilant['annotations']:
+        obj_defilant['category_id'] = 0
+        objs.append(obj_defilant)
+    for obj_ponctuel in data_ponctuel['annotations']:
+        obj_ponctuel['category_id'] = 1
+        objs.append(obj_ponctuel)
+    output['annotations'] = objs
+    img = cv2.imread(data_defilant["file_name"], cv2.IMREAD_COLOR)
+    visualizer = Visualizer(img, metadata=metadatas, scale=1.0, instance_mode=ColorMode.IMAGE)
+    out = visualizer.draw_dataset_dict(output)
+    cv2.imwrite('gt_image_example.png', out.get_image())
 
+
+# Classe permettant d'obtenir une loss sur les données de validation au moment de l'entrainement
 class LossEvalHook(HookBase):
-    def __init__(self, eval_period, model, data_loader):
+    def __init__(self, eval_period, model, data_loader, get_val_loss):
         self._model = model
         self._period = eval_period
         self._data_loader = data_loader
+        self.final_loss = None
+        self.get_val_loss = get_val_loss
 
-    def _do_loss_eval(self):
+    def _do_loss_eval(self, write_metric=True):
         # Copying inference_on_dataset from evaluator.py
         total = len(self._data_loader)
         num_warmup = min(5, total - 1)
@@ -440,10 +584,11 @@ class LossEvalHook(HookBase):
             loss_batch = self._get_loss(inputs)
             losses.append(loss_batch)
         mean_loss = np.mean(losses)
-        self.trainer.storage.put_scalar('validation_loss', mean_loss)
+        if write_metric:
+            self.trainer.storage.put_scalar('validation_loss', mean_loss)
         comm.synchronize()
 
-        return losses
+        return mean_loss
             
     def _get_loss(self, data):
         # How loss is calculated on train_loop 
@@ -459,20 +604,44 @@ class LossEvalHook(HookBase):
     def after_step(self):
         next_iter = self.trainer.iter + 1
         is_final = next_iter == self.trainer.max_iter
-        if is_final or (self._period > 0 and next_iter % self._period == 0):
-            self._do_loss_eval()
+        if self.get_val_loss:
+            if is_final or (self._period > 0 and next_iter % self._period == 0):
+                self.final_loss = self._do_loss_eval()
+        else:
+            if is_final:
+                self.final_loss = self._do_loss_eval(False)
         self.trainer.storage.put_scalars(timetest=12)
 
 class MyTrainer(DefaultTrainer):
+    def __init__(self, cfg, get_val_loss):
+        self.get_val_loss = get_val_loss
+        super().__init__(cfg)
     #@classmethod
     #def build_evaluator(cls, cfg, dataset_name, output_folder=None):
     #    if output_folder is None:
     #        output_folder = os.path.join(cfg.OUTPUT_DIR, "inference")
     #    return COCOEvaluator(dataset_name, cfg, True, output_folder)
+    def train(self):
+        """
+        Run training.
+        Returns:
+            OrderedDict of results, if evaluation is enabled. Otherwise None.
+        """
+        TrainerBase.train(self, self.start_iter, self.max_iter)
+        if comm.is_main_process():
+            if len(self.cfg.TEST.EXPECTED_RESULTS):
+                assert hasattr(
+                    self, "_last_eval_results"
+                ), "No evaluation results obtained during training!"
+                verify_results(self.cfg, self._last_eval_results)
+                return self._last_eval_results
+            else:
+                return self.custom_hook.final_loss
                      
     def build_hooks(self):
         hooks = super().build_hooks()
-        hooks.insert(-1,LossEvalHook(self.cfg.TEST.EVAL_PERIOD, self.model, build_detection_test_loader(self.cfg, self.cfg.DATASETS.TEST[0], DatasetMapper(self.cfg, True, augmentations=[]))))
+        self.custom_hook = LossEvalHook(self.cfg.TEST.EVAL_PERIOD, self.model, build_detection_test_loader(self.cfg, self.cfg.DATASETS.TEST[0], DatasetMapper(self.cfg, True, augmentations=[])), self.get_val_loss)
+        hooks.insert(-1, self.custom_hook)
         return hooks
     
     @classmethod

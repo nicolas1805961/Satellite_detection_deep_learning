@@ -255,20 +255,20 @@ def filter_boxes_rotated2(image_data, thresh):
         x1 = corners[:, 2, 0]
         y1 = corners[:, 2, 1]
 
+        # Iteration sur les zones de recouvrement
         for i in range(384, 2048 - 384, 384):
             col1 = ((x0 > i) & (x0 < i + 128)).reshape(-1, 1)
             col2 = ((x1 > i) & (x1 < i + 128)).reshape(-1, 1)
             col3 = ((y0 > i) & (y0 < i + 128)).reshape(-1, 1)
             col4 = ((y1 > i) & (y1 < i + 128)).reshape(-1, 1)
             mask = torch.cat([col1, col2, col3, col4], dim=1)
-            mask = torch.any(mask, dim=1).reshape(-1,)
+            mask = torch.any(mask, dim=1).reshape(-1,) # masque des objets dans les zones de recouvrement
             true_indices = torch.nonzero(mask)
-            
             filtered_areas = areas[mask]
             corners_filtered = corners[mask]
             
             polys = get_polygons(corners_filtered)
-            metrics = get_my_metric(polys, polys)
+            metrics = get_my_metric(polys, polys) # calcul du pourcentage de superposition
             metrics[torch.eye(len(metrics), dtype=torch.bool)] = 0
             indices_pair = torch.nonzero(metrics > thresh)
             if indices_pair.numel() == 0:
@@ -277,6 +277,7 @@ def filter_boxes_rotated2(image_data, thresh):
             areas_col = filtered_areas[indices_pair[:, 1]]
             whole_areas = torch.cat([areas_row, areas_col], dim=1)
             indices_to_remove_filtered = torch.min(whole_areas, dim=1)[1]
+            # On enlève la detection ayant l'aire la plus petite ci-dessous
             indices_to_remove_filtered = torch.gather(indices_pair, 1, indices_to_remove_filtered.reshape(-1, 1)).reshape(-1)
             
             indices_filtered = object_indices[true_indices[indices_to_remove_filtered]]
@@ -342,11 +343,15 @@ def filter_ponctuels(image_data, metric_thresh, score_thresh):
     metrics = get_my_metric(polys_ponctuels, polys_non_ponctuels)
     indices_pair = torch.nonzero(metrics > metric_thresh)
     values, count = torch.unique(indices_pair[:, 0], return_counts=True)
+    # Je récupère ici les ponctuels superposés à au moins deux objets
+    # ce sont les fausses detections de ponctuels qui apparaissent lorsque deux objets se croisent
     values = values[count > 1]
     ponctuel_overlap = boxes_ponctuels[indices_pair[:, 0]]
     ponctuel_overlap_scores = scores_ponctuels[indices_pair[:, 0]]
     other_overlap = boxes_non_ponctuel[indices_pair[:, 1]]
     score_mask = (ponctuel_overlap_scores < score_thresh)
+    # Indices_to_remove sont les ponctuels superposés à un autre objets et ayant un score de confiance
+    # inférieur au seuil score_thresh
     indices_to_remove = true_indices[indices_pair[:, 0][score_mask]]
     indices_to_remove = torch.unique(torch.cat([indices_to_remove, true_indices[values]], dim=0))
     
@@ -360,7 +365,7 @@ def filter_ponctuels(image_data, metric_thresh, score_thresh):
     return image_data
 
 def build_lists(path):
-    png_list = glob(os.path.join(path, '*.png'))
+    png_list = glob(os.path.join(path, '*.png'))[:3]
     print(len(png_list))
     return png_list
 

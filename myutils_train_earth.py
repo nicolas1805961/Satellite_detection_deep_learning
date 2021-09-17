@@ -28,7 +28,7 @@ setup_logger()
 # import some common detectron2 utilities
 from detectron2.data.transforms import RandomFlip
 from detectron2 import model_zoo
-from detectron2.engine import DefaultTrainer, HookBase
+from detectron2.engine import DefaultTrainer, HookBase, TrainerBase
 from detectron2.config import get_cfg
 from detectron2.utils.visualizer import Visualizer, ColorMode, _create_text_labels
 from detectron2.data import MetadataCatalog, DatasetCatalog, build_detection_test_loader, DatasetMapper, build_detection_train_loader
@@ -170,9 +170,9 @@ def get_dataset_stars(csv_list, png_list):
 
 # Lecture des fichiers json, csv et png dans le dataset et stockage dans 3 listes distinctes
 def build_lists(path):
-    json_list = sorted(glob(os.path.join(path, 'json_data', '*')), key=lambda x: int(x.split('.')[-2].split('/')[-1]))
-    csv_list = sorted(glob(os.path.join(path, 'csv_data', '*')), key=lambda x: int(x.split('.')[-2].split('/')[-1]))
-    png_list = sorted(glob(os.path.join(path, 'png_data', '*')), key=lambda x: int(x.split('.')[-2].split('/')[-1]))
+    json_list = sorted(glob(os.path.join(path, 'json_data', '*.json')), key=lambda x: int(x.split('.')[-2].split('/')[-1]))
+    csv_list = sorted(glob(os.path.join(path, 'csv_data', '*.csv')), key=lambda x: int(x.split('.')[-2].split('/')[-1]))
+    png_list = sorted(glob(os.path.join(path, 'png_data', '*.png')), key=lambda x: int(x.split('.')[-2].split('/')[-1]))
     print(len(json_list))
     print(len(csv_list))
     print(len(png_list))
@@ -1261,12 +1261,14 @@ class My_Dataset_Mapper(DatasetMapper):
 
 # Classe permettant d'obtenir une loss sur les données de validation au moment de l'entrainement
 class LossEvalHook(HookBase):
-    def __init__(self, eval_period, model, data_loader):
+    def __init__(self, eval_period, model, data_loader, get_val_loss):
         self._model = model
         self._period = eval_period
         self._data_loader = data_loader
+        self.final_loss = None
+        self.get_val_loss = get_val_loss
 
-    def _do_loss_eval(self):
+    def _do_loss_eval(self, write_metric=True):
         # Copying inference_on_dataset from evaluator.py
         total = len(self._data_loader)
         num_warmup = min(5, total - 1)
@@ -1287,10 +1289,11 @@ class LossEvalHook(HookBase):
             loss_batch = self._get_loss(inputs)
             losses.append(loss_batch)
         mean_loss = np.mean(losses)
-        self.trainer.storage.put_scalar('validation_loss', mean_loss)
+        if write_metric:
+            self.trainer.storage.put_scalar('validation_loss', mean_loss)
         comm.synchronize()
 
-        return losses
+        return mean_loss
             
     def _get_loss(self, data):
         # How loss is calculated on train_loop 
@@ -1306,25 +1309,49 @@ class LossEvalHook(HookBase):
     def after_step(self):
         next_iter = self.trainer.iter + 1
         is_final = next_iter == self.trainer.max_iter
-        if is_final or (self._period > 0 and next_iter % self._period == 0):
-            self._do_loss_eval()
+        if self.get_val_loss:
+            if is_final or (self._period > 0 and next_iter % self._period == 0):
+                self.final_loss = self._do_loss_eval()
+        else:
+            if is_final:
+                self.final_loss = self._do_loss_eval(False)
         self.trainer.storage.put_scalars(timetest=12)
 
 # Classe permettant de faire l'entrainement.
 # L'augmentation de données a été supprimée pour les satellites défilants.
 class MyTrainer(DefaultTrainer):
+    def __init__(self, cfg, get_val_loss):
+        self.get_val_loss = get_val_loss
+        super().__init__(cfg)
     #@classmethod
     #def build_evaluator(cls, cfg, dataset_name, output_folder=None):
     #    if output_folder is None:
     #        output_folder = os.path.join(cfg.OUTPUT_DIR, "inference")
     #    return COCOEvaluator(dataset_name, cfg, True, output_folder)
+    def train(self):
+        """
+        Run training.
+        Returns:
+            OrderedDict of results, if evaluation is enabled. Otherwise None.
+        """
+        TrainerBase.train(self, self.start_iter, self.max_iter)
+        if comm.is_main_process():
+            if len(self.cfg.TEST.EXPECTED_RESULTS):
+                assert hasattr(
+                    self, "_last_eval_results"
+                ), "No evaluation results obtained during training!"
+                verify_results(self.cfg, self._last_eval_results)
+                return self._last_eval_results
+            else:
+                return self.custom_hook.final_loss
                      
     def build_hooks(self):
         hooks = super().build_hooks()
         if 'output_defilant' in self.cfg.OUTPUT_DIR:
-            hooks.insert(-1,LossEvalHook(self.cfg.TEST.EVAL_PERIOD, self.model, build_detection_test_loader(self.cfg, self.cfg.DATASETS.TEST[0], My_Dataset_Mapper(self.cfg, True, augmentations=[]))))
+            self.custom_hook = LossEvalHook(self.cfg.TEST.EVAL_PERIOD, self.model, build_detection_test_loader(self.cfg, self.cfg.DATASETS.TEST[0], My_Dataset_Mapper(self.cfg, True, augmentations=[])), self.get_val_loss)
         else:
-            hooks.insert(-1,LossEvalHook(self.cfg.TEST.EVAL_PERIOD, self.model, build_detection_test_loader(self.cfg, self.cfg.DATASETS.TEST[0], DatasetMapper(self.cfg, True, augmentations=[]))))
+            self.custom_hook = LossEvalHook(self.cfg.TEST.EVAL_PERIOD, self.model, build_detection_test_loader(self.cfg, self.cfg.DATASETS.TEST[0], DatasetMapper(self.cfg, True, augmentations=[])), self.get_val_loss)
+        hooks.insert(-1, self.custom_hook)
         return hooks
     
     @classmethod
@@ -1336,7 +1363,7 @@ class MyTrainer(DefaultTrainer):
         It now calls :func:`detectron2.data.build_detection_train_loader`.
         Overwrite it if you'd like a different data loader.
         """
-        rf = RandomFlip() # augmentation de données
+        rf = RandomFlip()
         if 'output_defilant' in cfg.OUTPUT_DIR:
             return build_detection_train_loader(cfg, mapper=My_Dataset_Mapper(cfg, True, augmentations=[]))
         else:
@@ -1376,3 +1403,37 @@ class MyTrainer(DefaultTrainer):
     #    torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', 0.5, 100, )
     #    return build_lr_scheduler(cfg, optimizer)
 
+# Cette fonction est la fonction que Optuna va chercher à optimiser
+# La fonction doit prendre le paramètre trial en argument
+def objective(trial, cfg):
+    # 2 paramètres vont être optimisés ici avec les fonctions "suggest_*"
+    # On aurait pu en définir plus ou moins
+    lr_start = trial.suggest_float("lr_start", 1e-4, 1e-2)
+    lr_end = trial.suggest_float("lr_end", 1e-5, lr_start / 5)
+    print(f'lr_start = {lr_start}')
+    print(f'lr_end = {lr_end}')
+    cfg.SOLVER.BASE_LR = lr_start
+    x = Symbol('x', real=True, positive=True)
+    cfg.SOLVER.GAMMA = float(solve(cfg.SOLVER.BASE_LR * pow(x, len(cfg.SOLVER.STEPS)) - lr_end, x)[0])
+    os.makedirs(cfg.OUTPUT_DIR, exist_ok=True)
+    trainer = MyTrainer(cfg, False)
+    trainer.resume_or_load(resume=False)
+    # L'entrainement est lancé normalement au sein de la fonction à optimiser
+    final_loss = trainer.train()
+    # La valeur retournée par cette fonction est la quantité qui doit être optimisée.
+    # Ici il s'agit de la loss sur les données de validation
+    return final_loss
+
+# Fonction permettant de lancer l'optimisation
+# On peut remplacer la partie responsable de l'entrainement dans le script
+# train_sst.py par cette fonction
+def optimize():
+    study = optuna.create_study()
+    # On indique la fonction que l'on cherche à optimiser grâce à une lambda fonction de manière
+    # à pouvoir passer plusieurs paramètres
+    # n_trials indique le nombre d'entrainements lancé pour optimiser les paramètres
+    study.optimize(lambda trial: objective(trial, cfgs[1]), n_trials=100)
+    # On récupère les meilleures paramètres à la fin de ces n_trials essais
+    best_params = study.best_params
+    found_lr_start = best_params["lr_start"]
+    found_lr_end = best_params["lr_end"]

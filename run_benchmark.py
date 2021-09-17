@@ -91,5 +91,5 @@ elif mode == 'SIDERAL':
             myutils_benchmark_sideral.run_inference(dataset_test, predictors[0], path_out, method_name)
             myutils_benchmark_sideral.get_metrics_deep(dataset_test, path_out, 0.5, method_name)
 else:
-    raise('INPUT ERROR: MODE must be sideral or earth')
+    raise ValueError('INPUT ERROR: MODE must be sideral or earth')
 

@@ -7,6 +7,10 @@ import pickle
 from tqdm import tqdm
 from matplotlib.ticker import PercentFormatter
 from matplotlib import rcParams
+#import queue
+#import multiprocessing as mp
+#from multiprocessing import Process
+#import time
 
 # Some basic setup:
 # Setup detectron2 logger
@@ -44,6 +48,31 @@ def register_dataset_test(list_dict, classes, colors):
     MetadataCatalog.get("test").set(thing_classes=classes, thing_colors=colors)
     return MetadataCatalog.get("test")
 
+
+'''def runStart(q1, q2):
+    #while not q1.empty():
+    print(f'q1_size = {q1.qsize()}')
+    work = q1.get()
+    print('ok')
+    # do whatever work you have to do on work
+    big_output = (work[0], filter_boxes_rotated2(work[1], 0.5))
+    print('ok2')
+    print("Start thread : {}. Retrieved & Processed Item : {}".format(mp.current_process().name, work[0]))
+    q2.put(big_output, block=True)
+    #q1.task_done()
+    #q2.put(None, block=True)
+
+def runEnd(q2, q3):
+    while not q2.empty():
+        print(f'q2_size = {q2.qsize()}')
+        work = q2.get(True)
+        print('ok2')
+        # do whatever work you have to do on work
+        big_output = (work[0], filter_ponctuels(work[1], 0.5, 0.85))
+        print("End thread : {}. Retrieved & Processed Item : {}".format(mp.current_process().name, work[0]))
+        q3.put(big_output, block=True)
+        #q2.task_done()'''
+
 # Cette fonction permet d'effectuer l'inference sur le dataset de test en mode earth.
 # Il s'agit de la même fonction que dans les fichiers 'myutils_inference_*'
 def run_inference(dataset_test, predictors, path_out, method):
@@ -63,13 +92,13 @@ def run_inference(dataset_test, predictors, path_out, method):
                 for idx, class_predictor in enumerate(predictors):
                     out = class_predictor(image_data['patches'].numpy()[i, j, ...])
                     if idx == 1 or idx == 2:
-                        boxes = BoxMode.convert(out['instances'].pred_boxes.tensor, BoxMode.XYXY_ABS, BoxMode.XYWH_ABS).to('cpu')
+                        boxes = BoxMode.convert(out['instances'].pred_boxes.tensor.to('cpu'), BoxMode.XYXY_ABS, BoxMode.XYWH_ABS)
                         pred_boxes_list.append(RotatedBoxes(BoxMode.convert(boxes, BoxMode.XYWH_ABS, BoxMode.XYWHA_ABS)))
-                        pred_classes_list.append(torch.full(out['instances'].pred_classes.shape, idx, device='cuda:0'))
+                        pred_classes_list.append(torch.full(out['instances'].pred_classes.shape, idx, device='cpu'))
                     else:
                         pred_boxes_list.append(out['instances'].pred_boxes.to('cpu'))
-                        pred_classes_list.append(out['instances'].pred_classes)
-                    scores_list.append(out['instances'].scores)
+                        pred_classes_list.append(out['instances'].pred_classes.to('cpu'))
+                    scores_list.append(out['instances'].scores.to('cpu'))
 
                 output['instances'].pred_boxes = RotatedBoxes.cat(pred_boxes_list)
                 output['instances'].scores = torch.cat(scores_list)
@@ -81,8 +110,8 @@ def run_inference(dataset_test, predictors, path_out, method):
                 scores.append(output['instances'].scores)
                 pred_classes.append(output['instances'].pred_classes)
         big_output['instances'].pred_boxes = RotatedBoxes.cat(pred_boxes)
-        big_output['instances'].scores = torch.cat(scores)
-        big_output['instances'].pred_classes = torch.cat(pred_classes)
+        big_output['instances'].scores = torch.cat(scores).to('cpu')
+        big_output['instances'].pred_classes = torch.cat(pred_classes).to('cpu')
 
         big_output = filter_boxes_rotated2(big_output, 0.5)
         big_output = filter_ponctuels(big_output, 0.5, 0.85)
@@ -90,6 +119,7 @@ def run_inference(dataset_test, predictors, path_out, method):
         
     with open(os.path.join(path_out, 'output_inference_' + method + '.txt'), "wb") as fp:
         pickle.dump(list_of_big_output, fp)
+
 
 # Cette fonction permet de calculer les métriques pour l'inférence effectuée avec un modèle de deep.
 # Les métriques calculées sont: les vrais positifs, faux positifs, faux négatifs, 

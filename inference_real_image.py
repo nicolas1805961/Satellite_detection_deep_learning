@@ -66,17 +66,28 @@ if tool == 'BB_DETECTION':
         list_of_files_test = myutils_inference_earth.build_lists(path_in)
         myutils_inference_sideral.get_infered_image(list_of_files_test, predictors, metadatas, path_out, display_lines, display_labels)
     else:
-        raise('INPUT ERROR: MODE must be sideral or earth')
+        raise ValueError('INPUT ERROR: MODE must be sideral or earth')
 elif tool == 'SEG_INSTANCE':
     metadatas = Metadata()
-    metadatas.thing_classes = ['defilant', 'star']
-    metadatas.thing_colors = [(255, 0, 0), (0, 255, 0)]
+    if mode == 'EARTH':
+        metadatas.thing_classes = ['defilant', 'ponctuel', 'star']
+        metadatas.thing_colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255)]
 
-    with open(os.path.join(weight_folder, "cfgs.txt"), "rb") as fp:
-        cfgs = pickle.load(fp)
-        weights_defilant = os.path.join(weight_folder, 'output_defilant', 'model_final.pth')
-        weights_star = os.path.join(weight_folder, 'output_star', 'model_final.pth')
-        weights = [weights_defilant, weights_star]
+        with open(os.path.join(weight_folder, "cfgs.txt"), "rb") as fp:
+            cfgs = pickle.load(fp)
+            weights_defilant = os.path.join(weight_folder, 'output_defilant', 'model_final.pth')
+            weights_star = os.path.join(weight_folder, 'output_star', 'model_final.pth')
+            weights_ponctuel = os.path.join(weight_folder, 'output_ponctuel', 'model_final.pth')
+            weights = [weights_defilant, weights_ponctuel, weights_star]
+    elif mode == 'SIDERAL':
+        metadatas.thing_classes = ['defilant', 'star']
+        metadatas.thing_colors = [(255, 0, 0), (0, 255, 0)]
+
+        with open(os.path.join(weight_folder, "cfgs.txt"), "rb") as fp:
+            cfgs = pickle.load(fp)
+            weights_defilant = os.path.join(weight_folder, 'output_defilant', 'model_final.pth')
+            weights_star = os.path.join(weight_folder, 'output_star', 'model_final.pth')
+            weights = [weights_defilant, weights_star]
     
     predictors = myutils_inference_earth.get_predictors(cfgs, weights, config_dict)
     list_of_files_test = myutils_inference_earth.build_lists(path_in)
